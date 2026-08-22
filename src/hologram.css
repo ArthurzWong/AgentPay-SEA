@@ -1,0 +1,50 @@
+.holo-grid {
+  position: absolute;
+  inset: auto -20% -42% -20%;
+  height: 64%;
+  opacity: .34;
+  background: linear-gradient(rgb(87 240 221 / 36%) 1px, transparent 1px), linear-gradient(90deg, rgb(145 113 255 / 28%) 1px, transparent 1px);
+  background-size: 54px 42px;
+  transform: perspective(380px) rotateX(62deg);
+  transform-origin: center bottom;
+  mask-image: linear-gradient(to bottom, transparent, black 44%, black);
+}
+
+.holo-core {
+  position: absolute;
+  top: 13%;
+  right: 9%;
+  width: 240px;
+  height: 240px;
+  opacity: .48;
+  filter: drop-shadow(0 0 34px rgb(111 235 216 / 28%));
+}
+
+.holo-core::before {
+  content: '';
+  position: absolute;
+  inset: 35%;
+  border-radius: 50%;
+  background: #abfff0;
+  box-shadow: 0 0 26px 12px #54dbc9, 0 0 84px 30px rgb(137 94 255 / 42%);
+}
+
+.holo-core span {
+  position: absolute;
+  inset: 18%;
+  border: 1px solid rgb(155 255 239 / 68%);
+  border-radius: 50%;
+  transform: rotateX(64deg);
+}
+
+.holo-core span:nth-child(2) { inset: 5%; border-color: rgb(185 149 255 / 50%); transform: rotateX(64deg) rotateZ(57deg); }
+.holo-core span:nth-child(3) { inset: 30%; border-color: rgb(179 255 157 / 48%); transform: rotateX(64deg) rotateZ(112deg); }
+
+.console, .panel, .wallet, .result { transform: translateZ(0); transition: transform 200ms ease-out, border-color 200ms ease-out; }
+.console { position: relative; overflow: hidden; isolation: isolate; }
+.console::before { content: ''; position: absolute; z-index: -1; right: -5%; bottom: -68%; width: 64%; height: 170%; opacity: .28; background: linear-gradient(rgb(100 239 219 / 30%) 1px, transparent 1px), linear-gradient(90deg, rgb(184 141 255 / 24%) 1px, transparent 1px); background-size: 34px 34px; transform: perspective(430px) rotateX(65deg) rotateZ(-9deg); mask-image: radial-gradient(ellipse at center, black, transparent 68%); }
+.console::after { content: ''; position: absolute; z-index: -1; left: 0; right: 0; top: -16%; height: 32%; opacity: 0; background: linear-gradient(180deg, transparent, rgb(123 255 230 / 8%), transparent); transform: translateY(0); animation: hologram-scan 7s 2s infinite; }
+@keyframes hologram-scan { 0%, 15% { opacity: 0; transform: translateY(0); } 18% { opacity: 1; } 32% { opacity: 0; transform: translateY(420%); } 100% { opacity: 0; transform: translateY(420%); } }
+@media (hover: hover) { .console:hover, .panel:hover, .wallet:hover, .result:hover { transform: translateY(-3px) perspective(900px) rotateX(.35deg) rotateY(-.35deg); border-color: rgb(145 240 224 / 42%); } }
+@media (prefers-reduced-motion: reduce) { .holo-grid, .holo-core, .console::before, .console::after { display: none; }.console, .panel, .wallet, .result { transition: none; } }
+@media (max-width: 760px) { .holo-core { right: -18%; top: 12%; opacity: .25; }.holo-grid { inset: auto -80% -22% -80%; } }

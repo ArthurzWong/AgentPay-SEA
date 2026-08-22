@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "helius-mcp": {
+      "command": "npx",
+      "args": ["-y", "helius-mcp"],
+      "env": {
+        "HELIUS_API_KEY": "${HELIUS_API_KEY}"
+      }
+    }
+  }
+}

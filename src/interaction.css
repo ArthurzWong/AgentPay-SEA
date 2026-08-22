@@ -1,0 +1,36 @@
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: #ffb3b3;
+}
+
+.retry {
+  width: auto;
+  margin: 0;
+  padding: 8px 11px;
+  background: transparent;
+  border: 1px solid #a45d5d;
+  color: #ffd0d0;
+}
+
+.retry:focus-visible,
+button:focus-visible,
+textarea:focus-visible,
+a:focus-visible {
+  outline: 3px solid #d6ff96;
+  outline-offset: 3px;
+}
