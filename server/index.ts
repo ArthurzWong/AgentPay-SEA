@@ -1,26 +1,16 @@
-import 'dotenv/config';
 import cors from 'cors';
 import express, { type Request, type Response } from 'express';
-
-type ServiceId = 'supplier-search' | 'company-verification' | 'esg';
-type Payment = { id: string; service: ServiceId; amount: number; status: 'confirmed' | 'demo'; signature: string | null; createdAt: string };
-type Activity = { label: string; detail?: string; tone: 'info' | 'payment' | 'success' | 'error'; signature?: string | null };
+import type { Activity, AgentRunResponse, Payment, ServiceId, ServiceSummary } from '../shared/types.js';
+import { BUDGET, NETWORK, SERVICE_DEFINITIONS, SERVICE_IDS, SERVICE_PRICES, SOLANA_NETWORK } from '../shared/services.js';
+import { errorToMessage, formatUsdcAmount } from '../shared/utils.js';
+import { demoMode, port } from './config.js';
 
 export const app = express();
 app.use(cors()); app.use(express.json());
-const port = Number(process.env.PORT || 8787);
-const demoMode = process.env.DEMO_MODE !== 'false';
-const network = 'devnet';
-const prices: Record<ServiceId, number> = { 'supplier-search': 0.002, 'company-verification': 0.001, esg: 0.005 };
-const definitions: Record<ServiceId, { name: string; description: string }> = {
-  'supplier-search': { name: 'Supplier Intelligence', description: 'Synthetic Malaysian solar supplier shortlist.' },
-  'company-verification': { name: 'Company Verification', description: 'Synthetic company registration verification.' },
-  esg: { name: 'ESG Intelligence', description: 'Synthetic ESG profile for supplier evaluation.' }
-};
 const payments = new Map<string, Payment>();
 
 function challenge(service: ServiceId) {
-  return { scheme: 'exact', network: `solana-${network}`, asset: 'USDC', amount: prices[service].toFixed(3), service, description: definitions[service].description };
+  return { scheme: 'exact', network: SOLANA_NETWORK, asset: 'USDC', amount: formatUsdcAmount(SERVICE_PRICES[service]), service, description: SERVICE_DEFINITIONS[service].description };
 }
 function protectedData(service: ServiceId) {
   if (service === 'supplier-search') return { suppliers: [
@@ -43,10 +33,10 @@ function requirePayment(service: ServiceId, req: Request, res: Response): boolea
 function route(service: ServiceId) {
   app.get(`/api/services/${service}`, (req, res) => { if (requirePayment(service, req, res)) res.json({ demo_data: true, ...protectedData(service) }); });
 }
-(Object.keys(prices) as ServiceId[]).forEach(route);
+SERVICE_IDS.forEach(route);
 
 async function settle(service: ServiceId): Promise<Payment> {
-  const base: Payment = { id: crypto.randomUUID(), service, amount: prices[service], status: 'demo', signature: null, createdAt: new Date().toISOString() };
+  const base: Payment = { id: crypto.randomUUID(), service, amount: SERVICE_PRICES[service], status: 'demo', signature: null, createdAt: new Date().toISOString() };
   if (demoMode) { payments.set(base.id, base); return base; }
   // Keep Devnet-only native dependencies out of the Demo Mode function cold start.
   const { Connection, Keypair, PublicKey, Transaction, sendAndConfirmTransaction } = await import('@solana/web3.js');
@@ -58,7 +48,7 @@ async function settle(service: ServiceId): Promise<Payment> {
   const connection = new Connection(process.env.RPC_URL || 'https://api.devnet.solana.com', 'confirmed');
   const source = await getAssociatedTokenAddress(mintKey, payer.publicKey);
   const destination = await getAssociatedTokenAddress(mintKey, merchantKey);
-  const amount = Math.round(prices[service] * 1_000_000);
+  const amount = Math.round(SERVICE_PRICES[service] * 1_000_000);
   const tx = new Transaction();
   // The merchant needs no pre-existing USDC token account; create its ATA on the first paid request.
   try { await getAccount(connection, destination); }
@@ -72,8 +62,12 @@ async function settle(service: ServiceId): Promise<Payment> {
   payments.set(payment.id, payment); return payment;
 }
 
-app.get('/api/config', (_req, res) => res.json({ demoMode, network, budget: 0.05, services: Object.entries(definitions).map(([id, value]) => ({ id, ...value, price: prices[id as ServiceId] })) }));
+app.get('/api/config', (_req, res) => res.json({ demoMode, network: NETWORK, budget: BUDGET, services: Object.entries(SERVICE_DEFINITIONS).map(([id, value]) => ({ id: id as ServiceId, ...value, price: SERVICE_PRICES[id as ServiceId] } satisfies ServiceSummary)) }));
 app.get('/api/ledger', (_req, res) => res.json([...payments.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt))));
+
+async function callProtectedService(baseUrl: string, service: ServiceId, receipt?: string) {
+  return fetch(`${baseUrl}/api/services/${service}`, receipt ? { headers: { 'x-payment-receipt': receipt } } : undefined);
+}
 
 app.post('/api/agent/run', async (req, res) => {
   const prompt = String(req.body?.prompt || 'Find the best Malaysian solar supplier under RM50,000 and evaluate its ESG profile.');
@@ -81,32 +75,34 @@ app.post('/api/agent/run', async (req, res) => {
     { label: 'TASK RECEIVED', detail: prompt, tone: 'info' },
     { label: 'PLANNING', detail: 'I need supplier information, verification, and an ESG profile.', tone: 'info' }
   ];
-  const budget = 0.05; let spent = 0;
+  const budget = BUDGET; let spent = 0;
   const records: Payment[] = [];
+  const baseUrl = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : `http://127.0.0.1:${port}`;
   try {
-    for (const service of Object.keys(prices) as ServiceId[]) {
-      activities.push({ label: `CALLING ${definitions[service].name.toUpperCase()}`, tone: 'info' });
+    for (const service of SERVICE_IDS) {
+      activities.push({ label: `CALLING ${SERVICE_DEFINITIONS[service].name.toUpperCase()}`, tone: 'info' });
       // This deliberately goes through the protected HTTP endpoint first: the 402 is the payment trigger.
-      const baseUrl = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : `http://127.0.0.1:${port}`;
-      const initial = await fetch(`${baseUrl}/api/services/${service}`);
+      const initial = await callProtectedService(baseUrl, service);
       if (initial.status !== 402) throw new Error(`Expected a 402 from ${service}, received ${initial.status}.`);
       const requirement = await initial.json() as { payment: { amount: string } };
       const price = Number(requirement.payment.amount);
-      activities.push({ label: '402 PAYMENT REQUIRED', detail: `$${price.toFixed(3)} USDC`, tone: 'payment' });
-      if (spent + price > budget) throw new Error(`Budget exceeded before ${definitions[service].name}.`);
+      activities.push({ label: '402 PAYMENT REQUIRED', detail: `$${formatUsdcAmount(price)} USDC`, tone: 'payment' });
+      if (spent + price > budget) throw new Error(`Budget exceeded before ${SERVICE_DEFINITIONS[service].name}.`);
       activities.push({ label: 'BUDGET CHECK', detail: 'Within authorized budget. Auto-approved below $0.010.', tone: 'info' });
-      activities.push({ label: 'PAYMENT AUTHORIZED', detail: `$${price.toFixed(3)} USDC`, tone: 'payment' });
+      activities.push({ label: 'PAYMENT AUTHORIZED', detail: `$${formatUsdcAmount(price)} USDC`, tone: 'payment' });
       const payment = await settle(service); records.push(payment); spent += payment.amount;
       activities.push({ label: payment.signature ? 'SOLANA PAYMENT CONFIRMED' : 'DEMO PAYMENT AUTHORIZED', detail: payment.signature || 'No on-chain transaction in Demo Mode.', tone: 'success', signature: payment.signature });
       activities.push({ label: 'PAYMENT VERIFIED', detail: payment.signature ? 'Confirmed by Solana RPC.' : 'Local demo receipt verified.', tone: 'success' });
-      const unlocked = await fetch(`${baseUrl}/api/services/${service}`, { headers: { 'x-payment-receipt': payment.id } });
-      if (!unlocked.ok) throw new Error(`${definitions[service].name} did not unlock after settlement.`);
-      await unlocked.json(); activities.push({ label: 'DATA RECEIVED', detail: definitions[service].name, tone: 'success' });
+      const unlocked = await callProtectedService(baseUrl, service, payment.id);
+      if (!unlocked.ok) throw new Error(`${SERVICE_DEFINITIONS[service].name} did not unlock after settlement.`);
+      await unlocked.json(); activities.push({ label: 'DATA RECEIVED', detail: SERVICE_DEFINITIONS[service].name, tone: 'success' });
     }
     activities.push({ label: 'TASK COMPLETE', detail: 'Recommendation assembled from three paid capabilities.', tone: 'success' });
-    res.json({ prompt, activities, payments: records, spent, remaining: budget - spent, result: { supplier: 'ABC Solar Sdn Bhd', cost: 42000, rating: 4.6, verification: 'VERIFIED', esg: 78, renewable: 64 } });
+    const result: AgentRunResponse = { prompt, activities, payments: records, spent, remaining: budget - spent, result: { supplier: 'ABC Solar Sdn Bhd', cost: 42000, rating: 4.6, verification: 'VERIFIED', esg: 78, renewable: 64 } };
+    res.json(result);
   } catch (error) {
-    activities.push({ label: 'TASK FAILED', detail: error instanceof Error ? error.message : 'Unknown error', tone: 'error' });
-    res.status(400).json({ activities, error: error instanceof Error ? error.message : 'Unknown error' });
+    const message = errorToMessage(error);
+    activities.push({ label: 'TASK FAILED', detail: message, tone: 'error' });
+    res.status(400).json({ activities, error: message });
   }
 });
