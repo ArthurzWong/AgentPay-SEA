@@ -11,6 +11,14 @@ type Run = { activities: Activity[]; payments: Payment[]; spent: number; remaini
 const defaultPrompt = 'Find the best Malaysian solar supplier under RM50,000 and evaluate its ESG profile.';
 const labels: Record<string, string> = { 'supplier-search': 'Supplier Intelligence', 'company-verification': 'Company Verification', esg: 'ESG Intelligence' };
 
+// A crashed API or a proxy can answer with HTML, so the body is only parsed after it is known to be JSON.
+async function readJson(response: Response): Promise<unknown> {
+  const body = await response.text();
+  try { return JSON.parse(body); }
+  catch { throw new Error(`The AgentPay API returned a non-JSON response (HTTP ${response.status}).`); }
+}
+function messageOf(error: unknown, fallback: string) { return error instanceof Error && error.message ? error.message : fallback; }
+
 function App() {
   const [prompt, setPrompt] = useState(defaultPrompt), [services, setServices] = useState<Service[]>([]), [demo, setDemo] = useState(true);
   const [run, setRun] = useState<Run | null>(null), [ledger, setLedger] = useState<Payment[]>([]), [loading, setLoading] = useState(false), [error, setError] = useState(''), [apiStatus, setApiStatus] = useState<'loading' | 'ready' | 'error'>('loading');
@@ -18,10 +26,15 @@ function App() {
     setApiStatus('loading'); setError('');
     try {
       const response = await fetch('/api/config');
-      if (!response.ok) throw new Error('The AgentPay API returned an unexpected response.');
-      const c = await response.json(); setServices(c.services); setDemo(c.demoMode); setApiStatus('ready');
-    } catch {
-      setApiStatus('error'); setError('The AgentPay API is not running. From the project folder, run npm run dev, then select Retry connection.');
+      if (!response.ok) throw new Error(`The AgentPay API returned HTTP ${response.status}.`);
+      const c = await readJson(response) as { services?: Service[]; demoMode?: boolean };
+      if (!Array.isArray(c.services)) throw new Error('The AgentPay API returned a configuration without any services.');
+      setServices(c.services); setDemo(c.demoMode !== false); setApiStatus('ready');
+    } catch (e) {
+      // The underlying failure is kept in the console: the banner only carries the recovery instruction.
+      console.error('[config] load failed:', e);
+      setApiStatus('error');
+      setError(`${messageOf(e, 'The AgentPay API is unreachable.')} Run npm run dev from the project folder, then select Retry connection.`);
     }
   }
   useEffect(() => { void loadConfig(); }, []);
@@ -30,8 +43,16 @@ function App() {
   async function start() {
     if (apiStatus !== 'ready') { void loadConfig(); return; }
     setLoading(true); setError(''); setRun(null);
-    try { const response = await fetch('/api/agent/run', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt }) }); const data = await response.json(); if (!response.ok) throw new Error(data.error || 'Agent run failed'); setRun(data); setLedger(data.payments); }
-    catch (e) { setError(e instanceof Error ? e.message : 'Agent run failed'); } finally { setLoading(false); }
+    try {
+      const response = await fetch('/api/agent/run', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt }) });
+      const data = await readJson(response) as Partial<Run> & { error?: string };
+      if (!response.ok) throw new Error(data.error || `Agent run failed (HTTP ${response.status}).`);
+      if (!Array.isArray(data.activities) || !Array.isArray(data.payments) || !data.result) throw new Error('The agent run returned an incomplete result.');
+      setRun(data as Run); setLedger(data.payments);
+    } catch (e) {
+      console.error('[agent/run] failed:', e);
+      setError(messageOf(e, 'Agent run failed.'));
+    } finally { setLoading(false); }
   }
   return <><div className="space" aria-hidden="true"><div className="holo-grid"/><div className="holo-core"><span/><span/><span/></div><span className="star s1"/><span className="star s2"/><span className="star s3"/><span className="star s4"/><span className="star s5"/><span className="star s6"/><span className="star s7"/><span className="star s8"/></div><main>
     <header><div><span className="logo">A</span><div><h1>AgentPay <em>SEA</em></h1><p>Autonomous AI Commerce</p></div></div><div className="header-badges"><span className="pill">● Solana Devnet</span>{demo && <span className="pill demo">Demo data</span>}</div></header>
