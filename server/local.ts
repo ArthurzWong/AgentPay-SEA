@@ -1,7 +1,7 @@
 import { app } from './index.js';
+import { demoMode, port } from './config.js';
 
-const port = Number(process.env.PORT || 8787);
-const server = app.listen(port, () => console.log(`AgentPay API listening on http://localhost:${port} (${process.env.DEMO_MODE !== 'false' ? 'demo' : 'real settlement'} mode)`));
+const server = app.listen(port, () => console.log(`AgentPay API listening on http://localhost:${port} (${demoMode ? 'demo' : 'real settlement'} mode)`));
 
 server.on('error', (error: NodeJS.ErrnoException) => {
   if (error.code === 'EADDRINUSE') console.error(`Port ${port} is already in use. Stop the other process or set PORT to a free port.`);
