@@ -21,6 +21,17 @@ type Challenge = {
   service: string;
   description: string;
 };
+type AgentActivity = { label: string; detail?: string; tone: string; signature?: string | null };
+type AgentResult = { supplier: string; cost: number; rating: number; verification: string; esg: number; renewable: number };
+type AgentRunResponse = {
+  prompt: string;
+  activities: AgentActivity[];
+  payments: Payment[];
+  spent: number;
+  remaining: number;
+  result: AgentResult;
+};
+type ErrorBody = { error?: unknown; message?: unknown };
 type ParsedArgs = {
   command: string;
   args: string[];
@@ -108,15 +119,18 @@ async function request(baseUrl: string, path: string, init?: RequestInit): Promi
   }
 }
 
-async function body(response: Response): Promise<any> {
+async function body(response: Response): Promise<unknown> {
   try { return await response.json(); }
   catch { return null; }
 }
 
-async function requireOk(response: Response, context: string): Promise<any> {
+async function requireOk(response: Response, context: string): Promise<unknown> {
   if (!response.ok) {
     const data = await body(response);
-    const detail = data?.error || data?.message || response.statusText || `HTTP ${response.status}`;
+    const errorBody = data && typeof data === 'object' ? data as ErrorBody : {};
+    const detail = typeof errorBody.error === 'string' ? errorBody.error
+      : typeof errorBody.message === 'string' ? errorBody.message
+      : response.statusText || `HTTP ${response.status}`;
     throw new CliError(`${context}: ${detail}`);
   }
   return body(response);
@@ -210,16 +224,15 @@ async function buy(args: ParsedArgs): Promise<unknown> {
 }
 
 async function run(args: ParsedArgs): Promise<unknown> {
-  if (args.yes || args.maxPrice !== DEFAULT_MAX_PRICE || args.budget !== DEFAULT_BUDGET) throw new CliError('Buy policy flags are only valid with buy.', 2);
   const prompt = args.args.join(' ');
   const response = await request(args.baseUrl, '/api/agent/run', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(prompt ? { prompt } : {})
   });
-  const result = await requireOk(response, 'Agent run failed');
+  const result = await requireOk(response, 'Agent run failed') as AgentRunResponse;
   if (args.json) return result;
-  for (const activity of result.activities || []) console.log(`${activity.label}${activity.detail ? ` — ${activity.detail}` : ''}`);
+  for (const activity of result.activities) console.log(`${activity.label}${activity.detail ? ` — ${activity.detail}` : ''}`);
   console.log(`Spend: $${Number(result.spent).toFixed(3)} USDC`);
   console.log('Result:');
   output(result.result, false);
