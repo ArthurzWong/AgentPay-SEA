@@ -2,10 +2,18 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { Keypair } from '@solana/web3.js';
 
+function fail(message, cause) {
+  console.error(`\n${message}`);
+  if (cause) console.error(cause);
+  process.exit(1);
+}
+
 const envPath = resolve('.env');
 if (existsSync(envPath)) {
-  const content = readFileSync(envPath, 'utf8');
-  if (content.includes('SERVER_PRIVATE_KEY=')) throw new Error('.env already has a SERVER_PRIVATE_KEY. Refusing to overwrite it.');
+  let content;
+  try { content = readFileSync(envPath, 'utf8'); }
+  catch (error) { fail(`Could not read ${envPath}. Check its permissions before rerunning.`, error); }
+  if (content.includes('SERVER_PRIVATE_KEY=')) fail('.env already has a SERVER_PRIVATE_KEY. Refusing to overwrite it.');
 }
 
 const agent = Keypair.generate();
@@ -19,7 +27,8 @@ const env = [
   'USDC_MINT=4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU',
   'LLM_API_KEY='
 ].join('\n') + '\n';
-writeFileSync(envPath, env, { mode: 0o600 });
+try { writeFileSync(envPath, env, { mode: 0o600 }); }
+catch (error) { fail(`Could not write ${envPath}. The generated keys were discarded; fix the path permissions and rerun.`, error); }
 
 console.log('\nAgentPay Devnet wallets created. Private key is stored only in .env (gitignored).');
 console.log(`\nFund this AGENT wallet with Devnet SOL and Devnet USDC:\n${agent.publicKey.toBase58()}`);
