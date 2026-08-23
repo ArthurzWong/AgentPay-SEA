@@ -30,3 +30,20 @@ The server then creates an SPL Token `TransferChecked` transaction for every 402
 `GET /api/services/:service` without `X-Payment-Receipt` responds `402` plus a base64 `X-Payment-Required` challenge. The agent reads the price, applies the $0.050 budget and $0.010 auto-approve policy, settles, then retries the same endpoint with its verified receipt.
 
 The three protected services are `supplier-search` ($0.002), `company-verification` ($0.001), and `esg` ($0.005). All returned business data is visibly synthetic/demo data.
+
+## CLI
+
+The `agentpay` CLI lets terminal agents complete the 402 → server-side settlement → receipt flow:
+
+```bash
+npm run cli -- services
+npm run cli -- quote esg
+npm run cli -- buy esg
+npm run cli -- run Find the best Malaysian solar supplier
+npm run cli -- ledger
+npm run cli -- status
+```
+
+After installing the package locally (`npm link`), the same commands are available as `agentpay ...`. Use `--base-url <url>` or `AGENTPAY_API_URL` to select the API (default `http://localhost:8787`), and `--json` for one machine-readable JSON object on stdout. `buy` supports `--max-price <usd>` (default `$0.010`), `--budget <usd>` (default `$0.05`), and `--yes` to approve a purchase above the max-price threshold. Spending is read from the server ledger, so the budget applies across invocations.
+
+Exit codes: `0` success, `1` runtime/API error, `2` usage error, `3` policy refusal. See `integrations/hermes/` for Hermes Agent setup.

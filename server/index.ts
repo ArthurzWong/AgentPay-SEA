@@ -44,6 +44,9 @@ function route(service: ServiceId) {
   app.get(`/api/services/${service}`, (req, res) => { if (requirePayment(service, req, res)) res.json({ demo_data: true, ...protectedData(service) }); });
 }
 (Object.keys(prices) as ServiceId[]).forEach(route);
+function isServiceId(value: unknown): value is ServiceId {
+  return typeof value === 'string' && Object.prototype.hasOwnProperty.call(prices, value);
+}
 
 async function settle(service: ServiceId): Promise<Payment> {
   const base: Payment = { id: crypto.randomUUID(), service, amount: prices[service], status: 'demo', signature: null, createdAt: new Date().toISOString() };
@@ -74,6 +77,12 @@ async function settle(service: ServiceId): Promise<Payment> {
 
 app.get('/api/config', (_req, res) => res.json({ demoMode, network, budget: 0.05, services: Object.entries(definitions).map(([id, value]) => ({ id, ...value, price: prices[id as ServiceId] })) }));
 app.get('/api/ledger', (_req, res) => res.json([...payments.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt))));
+app.post('/api/payments', async (req, res) => {
+  const service = req.body?.service;
+  if (!isServiceId(service)) return res.status(404).json({ error: 'Unknown service.' });
+  try { res.json(await settle(service)); }
+  catch (error) { res.status(400).json({ error: error instanceof Error ? error.message : 'Settlement failed.' }); }
+});
 
 app.post('/api/agent/run', async (req, res) => {
   const prompt = String(req.body?.prompt || 'Find the best Malaysian solar supplier under RM50,000 and evaluate its ESG profile.');
