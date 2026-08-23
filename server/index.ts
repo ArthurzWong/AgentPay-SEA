@@ -1,15 +1,60 @@
 import 'dotenv/config';
+import { timingSafeEqual } from 'node:crypto';
 import cors from 'cors';
 import express, { type NextFunction, type Request, type Response } from 'express';
 
 type ServiceId = 'supplier-search' | 'company-verification' | 'esg';
-type Payment = { id: string; service: ServiceId; amount: number; status: 'confirmed' | 'demo'; signature: string | null; createdAt: string };
+type Payment = { id: string; service: ServiceId; amount: number; status: 'confirmed' | 'demo'; signature: string | null; createdAt: string; expiresAt: number; redeemed: boolean };
 type Activity = { label: string; detail?: string; tone: 'info' | 'payment' | 'success' | 'error'; signature?: string | null };
 
 export const app = express();
-app.use(cors()); app.use(express.json());
 const port = Number(process.env.PORT || 8787);
 const demoMode = process.env.DEMO_MODE !== 'false';
+const agentApiKey = process.env.AGENT_API_KEY || '';
+const selfOrigin = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : `http://localhost:5173`;
+const allowedOrigins = new Set((process.env.ALLOWED_ORIGINS || `${selfOrigin},http://localhost:5173,http://127.0.0.1:5173`).split(',').map(value => value.trim()).filter(Boolean));
+const maxPromptLength = 500;
+const receiptTtlMs = 15 * 60 * 1000;
+const maxRunsPerWindow = Number(process.env.RUN_RATE_LIMIT || 10);
+const rateWindowMs = 60_000;
+const runHits = new Map<string, number[]>();
+
+app.disable('x-powered-by');
+app.set('trust proxy', true);
+// Requests without an Origin header (the server's own fetch, curl, agent-to-agent calls) are not browser cross-site requests.
+app.use(cors({ origin: (origin, callback) => callback(null, !origin || allowedOrigins.has(origin)) }));
+app.use(express.json({ limit: '16kb' }));
+app.use((_req, res, next) => {
+  res.set({ 'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY', 'Referrer-Policy': 'no-referrer', 'Cross-Origin-Opener-Policy': 'same-origin' });
+  next();
+});
+
+function authorizedRun(req: Request, res: Response): boolean {
+  if (!agentApiKey) {
+    // A public demo run is acceptable; spending real USDC without an API key is not.
+    if (demoMode) return true;
+    res.status(503).json({ error: 'Real settlement mode requires AGENT_API_KEY to be configured.' });
+    return false;
+  }
+  const provided = Buffer.from(req.header('x-api-key') || '');
+  const expected = Buffer.from(agentApiKey);
+  if (provided.length !== expected.length || !timingSafeEqual(provided, expected)) {
+    res.status(401).json({ error: 'Unauthorized' });
+    return false;
+  }
+  return true;
+}
+function withinRateLimit(req: Request, res: Response): boolean {
+  const now = Date.now(), key = req.ip || 'unknown';
+  const hits = (runHits.get(key) || []).filter(at => now - at < rateWindowMs);
+  if (hits.length >= maxRunsPerWindow) {
+    res.status(429).json({ error: 'Too many agent runs. Try again shortly.' });
+    return false;
+  }
+  hits.push(now); runHits.set(key, hits);
+  if (runHits.size > 1000) for (const [ip, times] of runHits) if (!times.some(at => now - at < rateWindowMs)) runHits.delete(ip);
+  return true;
+}
 const network = 'devnet';
 const prices: Record<ServiceId, number> = { 'supplier-search': 0.002, 'company-verification': 0.001, esg: 0.005 };
 const definitions: Record<ServiceId, { name: string; description: string }> = {
@@ -45,12 +90,15 @@ function protectedData(service: ServiceId) {
 }
 function requirePayment(service: ServiceId, req: Request, res: Response): boolean {
   const receipt = req.header('x-payment-receipt');
-  const payment = receipt ? payments.get(receipt) : undefined;
-  if (!payment || payment.service !== service || !['confirmed', 'demo'].includes(payment.status)) {
+  const payment = receipt && receipt.length <= 64 ? payments.get(receipt) : undefined;
+  // A receipt unlocks its own service exactly once, within its validity window: a leaked or replayed receipt buys nothing.
+  const usable = payment && payment.service === service && !payment.redeemed && payment.expiresAt > Date.now() && ['confirmed', 'demo'].includes(payment.status);
+  if (!usable) {
     const requirement = challenge(service);
     res.status(402).set('X-Payment-Required', Buffer.from(JSON.stringify(requirement)).toString('base64')).json({ error: 'Payment Required', payment: requirement });
     return false;
   }
+  payment.redeemed = true;
   return true;
 }
 function route(service: ServiceId) {
@@ -62,7 +110,8 @@ function route(service: ServiceId) {
 (Object.keys(prices) as ServiceId[]).forEach(route);
 
 async function settle(service: ServiceId): Promise<Payment> {
-  const base: Payment = { id: crypto.randomUUID(), service, amount: prices[service], status: 'demo', signature: null, createdAt: new Date().toISOString() };
+  const base: Payment = { id: crypto.randomUUID(), service, amount: prices[service], status: 'demo', signature: null, createdAt: new Date().toISOString(), expiresAt: Date.now() + receiptTtlMs, redeemed: false };
+  for (const [id, existing] of payments) if (existing.expiresAt + receiptTtlMs < Date.now()) payments.delete(id);
   if (demoMode) { payments.set(base.id, base); return base; }
   // Keep Devnet-only native dependencies out of the Demo Mode function cold start.
   const { Connection, Keypair, PublicKey, Transaction, sendAndConfirmTransaction } = await import('@solana/web3.js');
@@ -105,10 +154,15 @@ async function settle(service: ServiceId): Promise<Payment> {
 }
 
 app.get('/api/config', (_req, res) => res.json({ demoMode, network, budget: 0.05, services: Object.entries(definitions).map(([id, value]) => ({ id, ...value, price: prices[id as ServiceId] })) }));
-app.get('/api/ledger', (_req, res) => res.json([...payments.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt))));
+app.get('/api/ledger', (_req, res) => res.json([...payments.values()].map(({ expiresAt: _expiresAt, redeemed: _redeemed, ...entry }) => entry).sort((a, b) => b.createdAt.localeCompare(a.createdAt))));
 
 app.post('/api/agent/run', async (req, res) => {
-  const prompt = String(req.body?.prompt || 'Find the best Malaysian solar supplier under RM50,000 and evaluate its ESG profile.');
+  if (!authorizedRun(req, res) || !withinRateLimit(req, res)) return;
+  const submitted = req.body?.prompt;
+  if (submitted !== undefined && typeof submitted !== 'string') return res.status(400).json({ error: 'prompt must be a string.' });
+  if (typeof submitted === 'string' && submitted.length > maxPromptLength) return res.status(400).json({ error: `prompt must be ${maxPromptLength} characters or fewer.` });
+  // Control characters are stripped so the prompt cannot forge lines in the activity trace or server logs.
+  const prompt = (submitted?.replace(/[\u0000-\u001f\u007f]/g, ' ').trim() || 'Find the best Malaysian solar supplier under RM50,000 and evaluate its ESG profile.');
   const activities: Activity[] = [
     { label: 'TASK RECEIVED', detail: prompt, tone: 'info' },
     { label: 'PLANNING', detail: 'I need supplier information, verification, and an ESG profile.', tone: 'info' }
@@ -145,7 +199,8 @@ app.post('/api/agent/run', async (req, res) => {
     activities.push({ label: 'TASK COMPLETE', detail: 'Recommendation assembled from three paid capabilities.', tone: 'success' });
     res.json({ prompt, activities, payments: records, spent, remaining: budget - spent, result: { supplier: 'ABC Solar Sdn Bhd', cost: 42000, rating: 4.6, verification: 'VERIFIED', esg: 78, renewable: 64 } });
   } catch (error) {
-    const status = statusOf(error), detail = messageOf(error);
+    // Only messages this server composed are safe to return; an unexpected fault could carry internal detail.
+    const status = statusOf(error), detail = error instanceof HttpError ? error.message : 'The agent run failed. Check the server logs for details.';
     console.error(`[agent/run] failed after $${spent.toFixed(3)} spent:`, error);
     activities.push({ label: 'TASK FAILED', detail, tone: 'error' });
     res.status(status).json({ activities, payments: records, spent, error: detail });
