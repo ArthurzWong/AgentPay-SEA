@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import type { AgentRunResponse, Payment, Service } from '../shared/types.js';
+import type { AgentRunResponse, Payment, ServiceSummary } from '../shared/types.js';
 import { BUDGET, NETWORK_LABEL, SERVICE_DEFINITIONS } from '../shared/services.js';
 import { errorToMessage, explorerTxUrl, formatUsdcAmount, shortenSignature } from '../shared/utils.js';
 import './styles.css';
@@ -10,14 +10,14 @@ import './hologram.css';
 const defaultPrompt = 'Find the best Malaysian solar supplier under RM50,000 and evaluate its ESG profile.';
 
 function App() {
-  const [prompt, setPrompt] = useState(defaultPrompt), [services, setServices] = useState<Service[]>([]), [demo, setDemo] = useState(true);
+  const [prompt, setPrompt] = useState(defaultPrompt), [services, setServices] = useState<ServiceSummary[]>([]), [demo, setDemo] = useState(true);
   const [run, setRun] = useState<AgentRunResponse | null>(null), [ledger, setLedger] = useState<Payment[]>([]), [loading, setLoading] = useState(false), [error, setError] = useState(''), [apiStatus, setApiStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   async function loadConfig() {
     setApiStatus('loading'); setError('');
     try {
       const response = await fetch('/api/config');
       if (!response.ok) throw new Error('The AgentPay API returned an unexpected response.');
-      const c = await response.json() as { demoMode: boolean; services: Service[] }; setServices(c.services); setDemo(c.demoMode); setApiStatus('ready');
+      const c = await response.json() as { demoMode: boolean; services: ServiceSummary[] }; setServices(c.services); setDemo(c.demoMode); setApiStatus('ready');
     } catch {
       setApiStatus('error'); setError('The AgentPay API is not running. From the project folder, run npm run dev, then select Retry connection.');
     }
