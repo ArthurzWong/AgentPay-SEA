@@ -6,6 +6,7 @@ AgentPay SEA is a hackathon MVP for autonomous AI commerce. An agent must receiv
 
 - `src/`: Vite + React TypeScript dashboard.
 - `server/index.ts`: Express API, protected services, budget guardrail, payment settlement, and deterministic agent orchestration.
+- `cli/agentpay.ts`: dependency-light terminal CLI for external agents, including Hermes Agent.
 - `@solana/web3.js` + `@solana/spl-token`: Devnet SPL USDC `TransferChecked` settlement.
 - Demo mode is the default. It exercises the exact 402/retry workflow but deliberately shows no fabricated Solana signature.
 

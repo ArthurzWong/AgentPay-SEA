@@ -10,7 +10,11 @@
     "build": "tsc --noEmit && vite build",
     "start": "node --import tsx server/local.ts",
     "check": "tsc --noEmit",
+    "cli": "node --import tsx cli/agentpay.ts",
     "devnet:wallet": "node scripts/create-devnet-wallet.mjs"
+  },
+  "bin": {
+    "agentpay": "bin/agentpay.mjs"
   },
   "dependencies": {
     "@solana/spl-token": "^0.4.13",
