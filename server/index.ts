@@ -79,6 +79,9 @@ async function settle(service: ServiceId): Promise<Payment> {
   const destination = await getAssociatedTokenAddress(mintKey, merchantKey);
   const amount = Math.round(prices[service] * 1_000_000);
   const tx = new Transaction();
+  // Create the payer ATA on demand so a fresh Devnet wallet can settle without a manual setup step.
+  try { await getAccount(connection, source); }
+  catch { tx.add(createAssociatedTokenAccountInstruction(payer.publicKey, source, payer.publicKey, mintKey)); }
   // The merchant needs no pre-existing USDC token account; create its ATA on the first paid request.
   // Only a missing or foreign-owned account may be recreated: RPC failures must surface instead of silently
   // turning into an ATA creation that then fails with an unrelated on-chain error.
@@ -143,7 +146,7 @@ app.post('/api/agent/run', async (req, res) => {
       activities.push({ label: 'DATA RECEIVED', detail: definitions[service].name, tone: 'success' });
     }
     activities.push({ label: 'TASK COMPLETE', detail: 'Recommendation assembled from three paid capabilities.', tone: 'success' });
-    res.json({ prompt, activities, payments: records, spent, remaining: budget - spent, result: { supplier: 'ABC Solar Sdn Bhd', cost: 42000, rating: 4.6, verification: 'VERIFIED', esg: 78, renewable: 64 } });
+    res.json({ prompt, activities, payments: records, spent, remaining: budget - spent, result: { supplier: 'ABC Solar Sdn Bhd', cost: 42000, rating: 4.6, verification: 'SIMULATED / DEMO', esg: 78, renewable: 64 } });
   } catch (error) {
     const status = statusOf(error), detail = messageOf(error);
     console.error(`[agent/run] failed after $${spent.toFixed(3)} spent:`, error);
