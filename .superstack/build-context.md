@@ -50,3 +50,15 @@
 - [x] Single-backend architecture selected; no custom program needed (2026-08-22)
 - [x] Helius MCP configuration added for optional Devnet inspection (2026-08-22)
 - [x] Project handoff context and contributor instructions added (2026-08-22)
+
+## Review
+
+- `review.security_score`: `A`
+- `review.quality_score`: `A`
+- `review.findings`: `[]`
+- `review.ready_for_mainnet`: `false`
+
+### Notes
+
+- The demo startup path now continues after a successful config load instead of requiring a second click.
+- The Devnet settlement path now creates missing payer and merchant USDC token accounts on demand.
