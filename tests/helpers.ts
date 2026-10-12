@@ -42,11 +42,28 @@ class FakeTransaction {
   }
 }
 
+class TokenAccountNotFoundError extends Error {
+  constructor(message = 'Token account not found') {
+    super(message);
+    this.name = 'TokenAccountNotFoundError';
+  }
+}
+
+class TokenInvalidAccountOwnerError extends Error {
+  constructor(message = 'Token account has an invalid owner') {
+    super(message);
+    this.name = 'TokenInvalidAccountOwnerError';
+  }
+}
+
 const mockGetAccount = vi.fn((...args: unknown[]) => {
   solanaMockState.associatedAccountCalls.push(args);
-  return solanaMockState.getAccountMode === 'reject'
-    ? Promise.reject(new Error('merchant ATA missing'))
-    : Promise.resolve({});
+  const address = args[1];
+  // Settlement checks the payer account, then the merchant account. "reject" means only the merchant ATA is missing.
+  if (solanaMockState.getAccountMode === 'reject' && address === 'destination-token-account') {
+    return Promise.reject(new TokenAccountNotFoundError('merchant ATA missing'));
+  }
+  return Promise.resolve({});
 });
 const mockGetAssociatedTokenAddress = vi.fn((...args: unknown[]) => {
   solanaMockState.associatedAddressCalls.push(args);
@@ -102,6 +119,8 @@ vi.mock('@solana/web3.js', () => ({
 }));
 
 vi.mock('@solana/spl-token', () => ({
+  TokenAccountNotFoundError,
+  TokenInvalidAccountOwnerError,
   createAssociatedTokenAccountInstruction: mockCreateAssociatedTokenAccountInstruction,
   createTransferCheckedInstruction: mockCreateTransferCheckedInstruction,
   getAccount: mockGetAccount,

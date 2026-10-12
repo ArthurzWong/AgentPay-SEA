@@ -147,7 +147,7 @@ describe('server API', () => {
         supplier: 'ABC Solar Sdn Bhd',
         cost: 42000,
         rating: 4.6,
-        verification: 'VERIFIED',
+        verification: 'SIMULATED / DEMO',
         esg: 78,
         renewable: 64
       });
@@ -159,7 +159,7 @@ describe('server API', () => {
   it('reports real-mode configuration failures as a failed task without Solana calls', async () => {
     const { app, server } = await startServer({ demoMode: false });
     try {
-      const response = await request(app).post('/api/agent/run').send({ prompt: 'real mode guard' }).expect(400);
+      const response = await request(app).post('/api/agent/run').send({ prompt: 'real mode guard' }).expect(500);
       const failed = response.body.activities.find((activity: { label: string }) => activity.label === 'TASK FAILED');
       expect(failed.detail).toBe('Real payment mode needs SERVER_PRIVATE_KEY, MERCHANT_WALLET, and USDC_MINT.');
     } finally {
@@ -222,10 +222,10 @@ describe('real settlement', () => {
     solanaMockState.signatureStatus = status;
     const { app, server } = await startServer({ demoMode: false, realCredentials: true });
     try {
-      const response = await request(app).post('/api/agent/run').send({ prompt: 'verification failure' }).expect(400);
+      const response = await request(app).post('/api/agent/run').send({ prompt: 'verification failure' }).expect(502);
       const failed = response.body.activities.find((activity: { label: string }) => activity.label === 'TASK FAILED');
-      expect(failed.detail).toBe('Payment verification failed on Solana.');
-      expect(response.body.payments).toBeUndefined();
+      expect(failed.detail).toBe('Payment verification failed on Solana for signature mock-signature.');
+      expect(response.body.payments).toEqual([]);
       expect(await request(app).get('/api/services/supplier-search')).toHaveProperty('status', 402);
       expect((await request(app).get('/api/ledger')).body).toEqual([]);
     } finally {
@@ -238,7 +238,7 @@ describe('real settlement', () => {
     const { app, server } = await startServer({ demoMode: false, realCredentials: true });
     try {
       await request(app).post('/api/agent/run').send({ prompt: 'create merchant ATA' }).expect(200);
-      expect(solanaMockState.associatedAccountCalls).toHaveLength(3);
+      expect(solanaMockState.associatedAccountCalls).toHaveLength(6);
       expect(solanaMockState.transactions[0].instructions[0]).toEqual({
         type: 'create-associated-token-account',
         args: [solanaMockState.payerPublicKey, 'destination-token-account', solanaMockState.merchantPublicKey, solanaMockState.mintPublicKey]
@@ -252,7 +252,7 @@ describe('real settlement', () => {
     const { app, server } = await startServer({ demoMode: false, realCredentials: true });
     try {
       await request(app).post('/api/agent/run').send({ prompt: 'existing merchant ATA' }).expect(200);
-      expect(solanaMockState.associatedAccountCalls).toHaveLength(3);
+      expect(solanaMockState.associatedAccountCalls).toHaveLength(6);
       expect(solanaMockState.transactions.every((transaction) => transaction.instructions.every(
         (instruction) => (instruction as { type: string }).type !== 'create-associated-token-account'
       ))).toBe(true);
